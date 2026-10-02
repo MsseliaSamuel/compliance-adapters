@@ -97,7 +97,9 @@ export class RpcEventSource implements EventSource {
 
   private getServer(): rpc.Server {
     if (!this.server) {
-      this.server = new rpc.Server(this.options.rpcUrl);
+      this.server = new rpc.Server(this.options.rpcUrl, {
+        allowHttp: this.options.rpcUrl.startsWith('http://'),
+      });
     }
     return this.server;
   }

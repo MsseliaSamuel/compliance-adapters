@@ -136,6 +136,31 @@ describe('POST /sanctions/sync', () => {
   });
 });
 
+describe('POST /admin/listener/* authentication', () => {
+  afterEach(() => {
+    delete process.env.ADMIN_TOKEN;
+  });
+
+  it('returns 503 when ADMIN_TOKEN is not configured', async () => {
+    const res = await request(app).post('/admin/listener/stop').set('X-Admin-Token', 'anything');
+    expect(res.status).toBe(503);
+  });
+
+  it('returns 401 when the token is missing or wrong', async () => {
+    process.env.ADMIN_TOKEN = 'secret-admin-token';
+    expect((await request(app).post('/admin/listener/start')).status).toBe(401);
+    const res = await request(app).post('/admin/listener/stop').set('X-Admin-Token', 'wrong');
+    expect(res.status).toBe(401);
+  });
+
+  it('passes the auth gate with the correct token', async () => {
+    process.env.ADMIN_TOKEN = 'secret-admin-token';
+    const res = await request(app).post('/admin/listener/stop').set('X-Admin-Token', 'secret-admin-token');
+    expect(res.body.error).not.toBe('unauthorized');
+    expect(res.body.error).not.toBe('admin_disabled');
+  });
+});
+
 describe('GET /metrics', () => {
   it('returns 200 with Prometheus text format', async () => {
     const res = await request(app).get('/metrics');

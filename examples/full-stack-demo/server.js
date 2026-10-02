@@ -8,6 +8,7 @@
  *                       in-memory token revocation store
  *   • sanctions-oracle — ProviderRegistry (fan-out across multiple providers)
  *                        + CsvSanctionsProvider + MockSanctionsProvider
+ *                        + RestSanctionsProvider
  *   • horizon-listener — polling Soroban RPC for contract events, forwarding
  *                        to a webhook
  *   • prom-client      — Prometheus metrics exposed on GET /metrics for both
@@ -30,6 +31,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { Keypair, Networks } = require('@stellar/stellar-sdk');
 const promClient = require('prom-client');
+const crypto = require('crypto');
 
 // Pull from local package builds (run `npm run build` in each workspace first).
 // In a real deployment these would be installed as npm dependencies.
@@ -479,6 +481,31 @@ app.post('/sanctions/sync', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Horizon listener admin controls
 // ---------------------------------------------------------------------------
+
+// Gate every /admin/* route: rate-limit by IP, then require a shared secret in
+// the X-Admin-Token header (ADMIN_TOKEN env var). Fails closed when the env var
+// is unset so the routes are never exposed by accident.
+function requireAdminToken(req, res, next) {
+  const ip = req.ip ?? 'unknown';
+  if (!rateLimiter(ip)) {
+    return res.status(429).json({ error: 'too_many_requests', retryAfter: 60 });
+  }
+
+  const expected = process.env.ADMIN_TOKEN;
+  if (!expected) {
+    return res.status(503).json({ error: 'admin_disabled', detail: 'ADMIN_TOKEN is not configured' });
+  }
+
+  const provided = req.get('X-Admin-Token');
+  const expectedHash = crypto.createHash('sha256').update(expected).digest();
+  const providedHash = crypto.createHash('sha256').update(typeof provided === 'string' ? provided : '').digest();
+  if (!provided || !crypto.timingSafeEqual(expectedHash, providedHash)) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  return next();
+}
+
+app.use('/admin', requireAdminToken);
 
 app.post('/admin/listener/start', async (req, res) => {
   if (!horizonListener) {

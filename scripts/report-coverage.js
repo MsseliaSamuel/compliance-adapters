@@ -6,8 +6,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const packages = ['sep10-auth', 'sanctions-oracle', 'horizon-listener'];
 const rootDir = path.resolve(__dirname, '..');
+
+// Derive packages from the root workspaces so new workspace packages are picked
+// up automatically; those without a coverage summary are skipped with a warning.
+const rootPkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+const packages = rootPkg.workspaces || [];
 
 let totalStmts = { covered: 0, total: 0 };
 let totalBranch = { covered: 0, total: 0 };

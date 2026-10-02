@@ -1,5 +1,11 @@
 import { Keypair, Networks, Transaction } from '@stellar/stellar-sdk';
-import { generateChallenge, InvalidClientAddressError } from '../src/challenge';
+import {
+  generateChallenge,
+  InvalidClientAddressError,
+  InvalidDomainError,
+  InvalidMemoError,
+  ServerKeypairCannotSignError,
+} from '../src/challenge';
 
 describe('generateChallenge', () => {
   const homeDomain = 'localhost:3000';
@@ -77,6 +83,14 @@ describe('generateChallenge', () => {
 
     expect(() => generateChallenge(invalidAddress, serverKeypair)).toThrow(
       InvalidClientAddressError,
+    );
+  });
+
+  it('throws ServerKeypairCannotSignError when serverKeypair has no secret key', () => {
+    const publicOnly = Keypair.fromPublicKey(Keypair.random().publicKey());
+
+    expect(() => generateChallenge(Keypair.random().publicKey(), publicOnly)).toThrow(
+      ServerKeypairCannotSignError,
     );
   });
 
@@ -163,5 +177,40 @@ describe('generateChallenge', () => {
     } finally {
       process.env.NODE_ENV = originalNodeEnv;
     }
+  });
+
+  it.each(['https://example.com', 'example.com/', 'example.com/path', 'exa mple.com'])(
+    'rejects non-bare homeDomain %p',
+    (bad) => {
+      expect(() =>
+        generateChallenge(Keypair.random().publicKey(), Keypair.random(), { homeDomain: bad }),
+      ).toThrow(InvalidDomainError);
+    },
+  );
+
+  it('rejects a non-bare webAuthDomain', () => {
+    expect(() =>
+      generateChallenge(Keypair.random().publicKey(), Keypair.random(), {
+        homeDomain: 'example.com',
+        webAuthDomain: 'https://example.com',
+      }),
+    ).toThrow(InvalidDomainError);
+  });
+
+  it.each(['abc', '12abc', '-1', '1.5', '', '18446744073709551616'])(
+    'rejects invalid memo %p with InvalidMemoError',
+    (memo) => {
+      expect(() =>
+        generateChallenge(Keypair.random().publicKey(), Keypair.random(), { memo }),
+      ).toThrow(InvalidMemoError);
+    },
+  );
+
+  it('accepts a valid uint64 memo', () => {
+    expect(() =>
+      generateChallenge(Keypair.random().publicKey(), Keypair.random(), {
+        memo: '18446744073709551615',
+      }),
+    ).not.toThrow();
   });
 });

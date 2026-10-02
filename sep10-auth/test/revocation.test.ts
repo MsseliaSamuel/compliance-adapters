@@ -92,4 +92,14 @@ describe('InMemoryRevocationStore', () => {
     expect(store.isRevoked(ADDRESS)).toBe(true);
     expect(store.isRevoked(otherAddress)).toBe(false);
   });
+
+  it('list() returns currently revoked addresses, excluding expired ones', () => {
+    const store = new InMemoryRevocationStore();
+    store.revoke(ADDRESS);
+    store.revoke('GTIMED', new Date('2026-01-01T00:00:10.000Z'));
+    expect(store.list()).toEqual([ADDRESS, 'GTIMED']);
+
+    jest.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
+    expect(store.list()).toEqual([ADDRESS]);
+  });
 });

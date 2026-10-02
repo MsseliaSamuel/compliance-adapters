@@ -7,12 +7,12 @@ import * as fs from 'fs';
 import {
   Contract,
   Keypair,
-  StrKey,
   TransactionBuilder,
   BASE_FEE,
   nativeToScVal,
   rpc,
 } from '@stellar/stellar-sdk';
+import { isValidStellarAddress } from '@compliance-adapters/shared';
 import { type Logger, noopLogger, consoleLogger } from '@compliance-adapters/logger';
 export type { Logger } from '@compliance-adapters/logger';
 import { SanctionsProvider } from './SanctionsProvider';
@@ -37,6 +37,7 @@ interface CacheEntry {
 export class ProviderResultCache {
   private cache: Map<string, CacheEntry> = new Map();
   private readonly ttlMs: number;
+  private readonly maxEntries?: number;
   private readonly inFlight = new Map<string, Promise<{ flagged: boolean; source: string }>>();
 
   /**
@@ -272,6 +273,11 @@ export interface SyncResult {
    */
   failed: string[];
   /**
+   * The same addresses as {@link SyncResult.failed}, each paired with the
+   * message of the final error that caused it to fail.
+   */
+  failedWithReasons: FailedAddress[];
+  /**
    * Input entries that are not valid Stellar Ed25519 public keys (StrKey
    * `G...`). These are never checked against the provider — a malformed entry
    * (typo, truncated paste, a non-Stellar identifier) is reported here rather
@@ -362,6 +368,43 @@ export async function syncSanctionsToDenylist(options: SyncOptions): Promise<Syn
   safeLogger.info('sanctions-oracle: starting sync', { total: addresses.length, dryRun });
 
   const uniqueAddresses = Array.from(new Set(addresses));
+
+  // Reject malformed input up front so a typo / truncated paste / non-Stellar
+  // identifier is reported distinctly instead of being checked and quietly
+  // landing in neither `flagged` nor `failed`.
+  const invalid: string[] = [];
+  const validAddresses: string[] = [];
+  for (const address of uniqueAddresses) {
+    if (isValidStellarAddress(address)) {
+      validAddresses.push(address);
+    } else {
+      invalid.push(address);
+    }
+  }
+  if (invalid.length > 0) {
+    safeLogger.warn('sanctions-oracle: skipping malformed addresses', { count: invalid.length });
+  }
+
+  // On a resume run, drop anything a prior run already finished.
+  const skipped: string[] = [];
+  let pendingAddresses = validAddresses;
+  if (resume && checkpoint) {
+    pendingAddresses = [];
+    for (const address of validAddresses) {
+      if (await checkpoint.isComplete(address)) {
+        skipped.push(address);
+      } else {
+        pendingAddresses.push(address);
+      }
+    }
+    if (skipped.length > 0) {
+      safeLogger.info('sanctions-oracle: resuming sync', {
+        skipped: skipped.length,
+        pending: pendingAddresses.length,
+      });
+    }
+  }
+
   const currentDenylistSet = new Set(currentDenylist);
   const inflightChecks = new Map<string, Promise<{ flagged: boolean; source: string }>>();
   const flagged: string[] = [];
@@ -490,6 +533,7 @@ safeLogger.info('sanctions-oracle: screening complete', {
         span.setAttribute('denylist_write.tx_hash', result.hash);
         span.end('ok');
         written.push(address);
+        await checkpoint?.markComplete(address);
         safeLogger.info('sanctions-oracle: address written to denylist', {
           address,
           hash: result.hash,
@@ -512,13 +556,14 @@ safeLogger.info('sanctions-oracle: screening complete', {
     flagged,
     written,
     failed,
+    failedWithReasons,
     invalid,
     skipped,
     dryRun,
   };
 }
 
-interface RpcDenylistWriterOptions {
+export interface RpcDenylistWriterOptions {
   rpcUrl: string;
   networkPassphrase: string;
   contractId: string;
@@ -541,7 +586,7 @@ interface RpcDenylistWriterOptions {
    * Optional logger used to record an audit-logging failure without failing
    * the write it accompanies. Defaults to a no-op logger.
    */
-  logger?: StructuredLogger;
+  logger?: Logger;
 }
 
 // Kept behind the DenylistWriter interface (rather than called directly

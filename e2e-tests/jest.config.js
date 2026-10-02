@@ -13,7 +13,11 @@ module.exports = {
   // Point sibling workspace packages at their TypeScript source so ts-jest
   // can compile them directly without requiring a separate build step first.
   moduleNameMapper: {
+    '^@compliance-adapters/backoff$': '<rootDir>/../backoff/src/index.ts',
+    '^@compliance-adapters/metrics$': '<rootDir>/../metrics/src/index.ts',
     '^@compliance-adapters/logger$': '<rootDir>/../logger/src/index.ts',
+    '^@compliance-adapters/tracing$': '<rootDir>/../tracing/src/index.ts',
+    '^@compliance-adapters/tracing-types$': '<rootDir>/../tracing-types/src/index.ts',
     '^sanctions-oracle$': '<rootDir>/../sanctions-oracle/src/index.ts',
     '^horizon-listener$': '<rootDir>/../horizon-listener/src/index.ts',
   },
@@ -31,5 +35,5 @@ module.exports = {
   // Verbose output for debugging
   verbose: true,
   // Collect coverage separately (optional)
-  collectCoverageFrom: ['test/**/*.ts'],
+  collectCoverageFrom: ['../horizon-listener/src/**/*.ts', '../sanctions-oracle/src/**/*.ts'],
 };

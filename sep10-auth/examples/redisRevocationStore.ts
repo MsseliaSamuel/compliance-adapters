@@ -120,6 +120,13 @@ export interface RedisLike {
    */
   set(key: string, value: string, exMode?: 'PX', pxMs?: number): Promise<unknown>;
 
+  /**
+   * SCAN cursor MATCH pattern — iterates keys matching `pattern`. Both
+   * ioredis and node-redis (via a small wrapper) can provide this shape:
+   * `redis.scan(cursor, 'MATCH', pattern)` resolving to `[nextCursor, keys]`.
+   */
+  scan(cursor: string, matchMode: 'MATCH', pattern: string): Promise<[string, string[]]>;
+
   /** DEL key — removes a key; no-op if the key does not exist. */
   del(key: string): Promise<unknown>;
 }
@@ -196,6 +203,21 @@ export class RedisRevocationStore implements RevocationStore {
    */
   async unrevoke(address: string): Promise<void> {
     await this.redis.del(this.key(address));
+  }
+
+  /**
+   * Enumerates currently revoked addresses by SCANning the `keyPrefix`
+   * namespace. Expired timed revocations are already gone from Redis.
+   */
+  async list(): Promise<string[]> {
+    const addresses = new Set<string>();
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', `${this.keyPrefix}*`);
+      for (const key of keys) addresses.add(key.slice(this.keyPrefix.length));
+      cursor = next;
+    } while (cursor !== '0');
+    return [...addresses];
   }
 
   // --------------------------------------------------------------------------

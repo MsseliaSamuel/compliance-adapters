@@ -13,12 +13,14 @@
   },
   "scripts": {
     "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
     "test": "jest",
     "bench": "ts-node bench/challenge-throughput.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.0.1",
-    "@compliance-adapters/logger": "*"
+    "@compliance-adapters/logger": "*",
+    "@compliance-adapters/shared": "*"
   },
   "peerDependencies": {
     "express": "^4.19.0"

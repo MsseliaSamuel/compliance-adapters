@@ -37,13 +37,5 @@
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.4",
     "typescript": "^5.5.4"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "testMatch": ["**/test/**/*.test.js"],
-    "transformIgnorePatterns": ["/node_modules/(?!(@noble|uint8array-extras)/)"],
-    "transform": {
-      "^.+\\.js$": "babel-jest"
-    }
   }
 }

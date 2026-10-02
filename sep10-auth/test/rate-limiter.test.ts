@@ -1,6 +1,10 @@
 ///<reference types="jest" />
 import { Request, Response, NextFunction } from 'express';
-import { rateLimiter, RateLimiterOptions } from '../src/rate-limiter';
+import {
+  rateLimiter,
+  RateLimitStore,
+  RateLimitDecision,
+} from '../src/rate-limiter';
 
 function mockRequest(overrides: Partial<Request> = {}): Request {
   return {
@@ -19,6 +23,21 @@ function mockResponse(): Response {
   return res as Response;
 }
 
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function invokeMiddleware(
+  middleware: ReturnType<typeof rateLimiter>,
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  middleware(req, res, next);
+  await flushPromises();
+}
+
 describe('rateLimiter', () => {
   let req: Request;
   let res: Response;
@@ -35,28 +54,28 @@ describe('rateLimiter', () => {
     jest.useRealTimers();
   });
 
-  it('allows requests under the limit', () => {
+  it('allows requests under the limit', async () => {
     const middleware = rateLimiter({ windowMs: 60_000, maxRequests: 5 });
 
     for (let i = 0; i < 5; i++) {
-      middleware(req, res, next);
+      await invokeMiddleware(middleware, req, res, next);
     }
 
     expect(next).toHaveBeenCalledTimes(5);
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it('blocks requests that exceed the limit and returns 429', () => {
+  it('blocks requests that exceed the limit and returns 429', async () => {
     const middleware = rateLimiter({ windowMs: 60_000, maxRequests: 3 });
 
     for (let i = 0; i < 3; i++) {
-      middleware(req, res, next);
+      await invokeMiddleware(middleware, req, res, next);
     }
 
     expect(next).toHaveBeenCalledTimes(3);
 
     // 4th request — should be blocked
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(429);
     expect(res.json).toHaveBeenCalledWith(
@@ -65,11 +84,11 @@ describe('rateLimiter', () => {
     expect(next).toHaveBeenCalledTimes(3); // next not called for blocked request
   });
 
-  it('includes retryAfter in the 429 response', () => {
+  it('includes retryAfter in the 429 response', async () => {
     const middleware = rateLimiter({ windowMs: 60_000, maxRequests: 1 });
 
-    middleware(req, res, next); // 1st — ok
-    middleware(req, res, next); // 2nd — blocked
+    await invokeMiddleware(middleware, req, res, next); // 1st — ok
+    await invokeMiddleware(middleware, req, res, next); // 2nd — blocked
 
     expect(res.status).toHaveBeenCalledWith(429);
     expect(res.json).toHaveBeenCalledWith(
@@ -84,22 +103,22 @@ describe('rateLimiter', () => {
     );
   });
 
-  it('resets the counter after the window expires', () => {
+  it('resets the counter after the window expires', async () => {
     const middleware = rateLimiter({ windowMs: 60_000, maxRequests: 1 });
 
-    middleware(req, res, next); // 1st — ok
+    await invokeMiddleware(middleware, req, res, next); // 1st — ok
     expect(next).toHaveBeenCalledTimes(1);
 
     // Advance past the window
     jest.advanceTimersByTime(60_001);
 
-    middleware(req, res, next); // 2nd — should be allowed again
+    await invokeMiddleware(middleware, req, res, next); // 2nd — should be allowed again
 
     expect(next).toHaveBeenCalledTimes(2);
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it('uses a custom key generator when provided', () => {
+  it('uses a custom key generator when provided', async () => {
     const keyGenerator = jest.fn().mockReturnValue('custom-key');
     const middleware = rateLimiter({
       windowMs: 60_000,
@@ -107,14 +126,14 @@ describe('rateLimiter', () => {
       keyGenerator,
     });
 
-    middleware(req, res, next); // 1st — ok
+    await invokeMiddleware(middleware, req, res, next); // 1st — ok
     expect(keyGenerator).toHaveBeenCalledWith(req);
 
-    middleware(req, res, next); // 2nd — blocked for same custom key
+    await invokeMiddleware(middleware, req, res, next); // 2nd — blocked for same custom key
     expect(res.status).toHaveBeenCalledWith(429);
   });
 
-  it('isolates rate limit counters by custom key', () => {
+  it('isolates rate limit counters by custom key', async () => {
     let keyCounter = 0;
     const keyGenerator = jest.fn(() => `user-${keyCounter++ % 2}`);
     const middleware = rateLimiter({
@@ -124,45 +143,84 @@ describe('rateLimiter', () => {
     });
 
     // user-0: two requests allowed
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(next).toHaveBeenCalledTimes(1);
 
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(next).toHaveBeenCalledTimes(2);
 
     // user-1: two requests allowed (different key — separate counter)
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(next).toHaveBeenCalledTimes(3);
 
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(next).toHaveBeenCalledTimes(4);
 
     // user-0 again (3rd request) — blocked
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(res.status).toHaveBeenCalledWith(429);
     expect(next).toHaveBeenCalledTimes(4); // no change
   });
 
-  it('falls back to socket remoteAddress when ip is not set', () => {
+  it('falls back to socket remoteAddress when ip is not set', async () => {
     const noIpReq = mockRequest({ ip: undefined });
     const middleware = rateLimiter({ windowMs: 60_000, maxRequests: 1 });
 
-    middleware(noIpReq, res, next);
+    await invokeMiddleware(middleware, noIpReq, res, next);
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it('applies default options when none are provided', () => {
+  it('applies default options when none are provided', async () => {
     const middleware = rateLimiter();
 
     // 100 requests should all be allowed with default max
     for (let i = 0; i < 100; i++) {
-      middleware(req, res, next);
+      await invokeMiddleware(middleware, req, res, next);
     }
 
     expect(next).toHaveBeenCalledTimes(100);
 
     // 101st should be blocked
-    middleware(req, res, next);
+    await invokeMiddleware(middleware, req, res, next);
     expect(res.status).toHaveBeenCalledWith(429);
+  });
+
+  it('throws at construction time for non-positive maxRequests', () => {
+    expect(() => rateLimiter({ maxRequests: 0 })).toThrow(
+      /maxRequests.*positive integer/i,
+    );
+    expect(() => rateLimiter({ maxRequests: -1 })).toThrow(
+      /maxRequests.*positive integer/i,
+    );
+  });
+
+  it('throws at construction time for non-positive windowMs', () => {
+    expect(() => rateLimiter({ windowMs: 0 })).toThrow(
+      /windowMs.*positive integer/i,
+    );
+    expect(() => rateLimiter({ windowMs: -100 })).toThrow(
+      /windowMs.*positive integer/i,
+    );
+  });
+
+  it('uses a custom store implementation', async () => {
+    const decisions: RateLimitDecision[] = [
+      { allowed: true, count: 1, resetAt: Date.now() + 60_000 },
+      { allowed: false, count: 1, resetAt: Date.now() + 5_000 },
+    ];
+    const consume = jest.fn(() => decisions.shift()!);
+    const store: RateLimitStore = { consume };
+    const middleware = rateLimiter({
+      windowMs: 60_000,
+      maxRequests: 1,
+      store,
+    });
+
+    await invokeMiddleware(middleware, req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+
+    await invokeMiddleware(middleware, req, res, next);
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(consume).toHaveBeenCalledTimes(2);
   });
 });

@@ -27,6 +27,10 @@ function makeRedisStub(): jest.Mocked<RedisLike> {
       store.set(key, value);
       return 'OK';
     }),
+    scan: jest.fn(async (_cursor: string, _mode: 'MATCH', pattern: string) => {
+      const prefix = pattern.slice(0, -1);
+      return ['0', [...store.keys()].filter((k) => k.startsWith(prefix))] as [string, string[]];
+    }),
     del: jest.fn(async (key: string) => {
       store.delete(key);
       return 1;
@@ -179,5 +183,14 @@ describe('RedisRevocationStore', () => {
 
     expect(await store.isRevoked(ADDRESS)).toBe(true);
     expect(await store.isRevoked(OTHER)).toBe(false);
+  });
+
+  it('list() returns revoked addresses without the key prefix', async () => {
+    const store = new RedisRevocationStore(makeRedisStub());
+    await store.revoke(ADDRESS);
+    await store.revoke(OTHER);
+    expect((await store.list()).sort()).toEqual([ADDRESS, OTHER].sort());
+    await store.unrevoke(ADDRESS);
+    expect(await store.list()).toEqual([OTHER]);
   });
 });

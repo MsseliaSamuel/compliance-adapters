@@ -14,7 +14,11 @@ module.exports = {
   // Point the shared logger package at its TypeScript source so ts-jest can
   // compile it directly without requiring a separate build step.
   moduleNameMapper: {
+    '^@compliance-adapters/backoff$': '<rootDir>/../backoff/src/index.ts',
+    '^@compliance-adapters/metrics$': '<rootDir>/../metrics/src/index.ts',
+    '^@compliance-adapters/tracing$': '<rootDir>/../tracing/src/index.ts',
     '^@compliance-adapters/logger$': '<rootDir>/../logger/src/index.ts',
+    '^@compliance-adapters/tracing$': '<rootDir>/../tracing/src/index.ts',
     '^@compliance-adapters/tracing-types$': '<rootDir>/../tracing-types/src/index.ts',
   },
   collectCoverageFrom: ['src/**/*.ts'],

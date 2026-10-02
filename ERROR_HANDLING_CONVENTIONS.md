@@ -191,6 +191,14 @@ export class ComplianceAdapterError extends Error {
 
 This would allow consumers to catch errors by type rather than string matching.
 
+**Decision (2026-09-24)**: Defer introducing a shared `ComplianceAdapterError`
+base type for now. The three packages expose intentionally different contracts
+(result-object validation in `sep10-auth`, CLI/library split in
+`sanctions-oracle`, and resilience-first listener behavior in
+`horizon-listener`), so forcing a shared throwable type today would add API
+surface without reducing current integration friction. Revisit when at least
+two packages need a shared machine-readable error contract in practice.
+
 ## Summary for Consumers
 
 | Package | Primary Pattern | Throws? | Consumer Action |
@@ -206,4 +214,4 @@ This would allow consumers to catch errors by type rather than string matching.
 - [x] Add error message prefixes to sanctions-oracle
 - [x] Refactor CsvSanctionsProvider to not throw in constructor
 - [x] Add JSDoc documentation for throwing methods in horizon-listener
-- [ ] Consider common error types for future enhancement
+- [x] Decide on common error types roadmap item (deferred; see decision note above)

@@ -4,19 +4,31 @@ This directory contains true end-to-end tests that validate the complete complia
 
 ## What Gets Tested
 
-A single comprehensive test that:
+### 1. Main E2E Test (`integration.test.ts`)
+
+A comprehensive test that:
 1. Deploys `denylist-gate` from compliance-primitives to a local Stellar testnet
 2. Runs `sanctions-oracle` sync (non-dry-run) against a known flagged address
-3. Starts `horizon-listener` monitoring for denylist events
+3. Starts `horizon-listener` monitoring for denylist events (using a **synthetic** event source)
 4. Asserts the event is observed and correctly reported
 
 This proves the three packages actually interoperate end-to-end, beyond isolated unit tests.
+
+### 2. Horizon-Listener Integration Test (`horizon-listener-integration.test.ts`)
+
+An opt-in integration test that:
+1. Deploys `denylist-gate` from compliance-primitives to a local Stellar testnet
+2. Runs `sanctions-oracle` sync (non-dry-run) against a known flagged address
+3. Starts `horizon-listener` with the **real** `RpcEventSource` polling the Soroban RPC
+4. Asserts the `denylist_added` event is observed end-to-end through the actual event pipeline
+
+This proves `RpcEventSource` + `HorizonListener` work with a live Soroban testnet, beyond mocked event sources.
 
 ## Test Infrastructure
 
 ### Network Setup
 
-**Local Testnet**: Stellar Soroban Preview Container (`stellar/soroban-preview:latest`)
+**Local Testnet**: Stellar Quickstart Container (`stellar/quickstart:testing`)
 - Runs isolated Stellar network in Docker
 - No external dependencies on testnet.stellar.org
 - Consistent ledger state for repeatable tests
@@ -37,10 +49,12 @@ e2e-tests/
   tsconfig.json           # TypeScript config for e2e
   package.json            # e2e test dependencies
   test/
-    integration.test.ts   # The main e2e test
+    integration.test.ts             # Main e2e test (synthetic event source for listener)
+    horizon-listener-integration.test.ts  # Opt-in: real RpcEventSource + HorizonListener
     fixtures/
-      contract.wasm       # Prebuilt denylist-gate contract
-      setup.ts            # Helper to deploy contract, fund accounts
+      denylist-gate.wasm            # Prebuilt denylist-gate contract
+      denylist-gate-contract/       # Contract source (for rebuilding)
+      setup.ts                      # Helper to deploy contract, fund accounts
 ```
 
 ### Running Tests
@@ -48,21 +62,35 @@ e2e-tests/
 #### Locally (Recommended for Development)
 
 ```bash
-# Start the testnet container and run tests
-npm run e2e
+# Start the testnet container and run all e2e tests
+npm run test:e2e
 
-# Run tests without stopping container (for iteration)
-npm run e2e:test-only
+# Run all e2e tests without stopping container (for iteration)
+npm run test:e2e:test-only
 
 # Stop the container when done
-npm run e2e:stop
+npm run test:e2e:stop
 ```
+
+#### Horizon-Listener Integration Test (Opt-In, Requires Docker)
+
+This test spins up a real Soroban testnet container, deploys a `denylist-gate` contract, triggers a real on-chain denylist event, and verifies that `RpcEventSource` + `HorizonListener` observe it end-to-end. It is separated from the fast unit suite and the existing synthetic e2e test.
+
+```bash
+# Start the testnet container and run the horizon-listener integration test
+npm run test:integration:horizon-listener
+
+# In CI (auto-stops the container on exit)
+npm run test:integration:horizon-listener:ci
+```
+
+The test fails fast with a clear message if Docker is not available, rather than hanging on RPC connection attempts.
 
 #### In CI
 
 ```bash
 # Single command; CI will handle cleanup on job exit
-npm run e2e:ci
+npm run test:e2e:ci
 ```
 
 ## How It Works
@@ -185,9 +213,15 @@ npm test
 # Runs only: sep10-auth, sanctions-oracle, horizon-listener unit tests
 # Takes ~5s, deterministic (fake timers)
 
-npm run e2e
-# Runs only: end-to-end integration test
+npm run test:e2e
+# Runs all e2e tests (including the main integration test)
 # Takes ~30s, depends on real ledger latency
+# Should only run when explicitly requested or in a separate CI job
+
+npm run test:integration:horizon-listener
+# Runs the horizon-listener integration test with a real RpcEventSource
+# against a live Soroban testnet. Requires Docker.
+# Takes ~60s, depends on real ledger latency and contract deployment
 # Should only run when explicitly requested or in a separate CI job
 ```
 
@@ -213,7 +247,17 @@ jobs:
       - uses: actions/setup-node@v4
       - run: npm ci
       - run: npm install --workspace=e2e-tests
-      - run: npm run e2e:ci       # Slower, ~30s, but proves interop
+      - run: npm run test:e2e:ci       # Slower, ~30s, but proves interop
+
+  test-integration-horizon-listener:
+    runs-on: ubuntu-latest
+    needs: test-unit              # Run after unit tests pass
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - uses: docker/setup-buildx-action@v3
+      - run: npm run test:integration:horizon-listener:ci  # ~60s, real Soroban testnet
 ```
 
 ## Troubleshooting
@@ -228,7 +272,7 @@ lsof -i :8000
 docker-compose -f e2e-tests/docker-compose.yml down -v
 
 # Try again
-npm run e2e
+npm run test:e2e
 ```
 
 ### RPC Health Check Fails
@@ -263,7 +307,7 @@ If tests hang indefinitely, most likely causes:
 Add verbose logging to understand where it's stuck:
 
 ```bash
-DEBUG=* npm run e2e:test-only
+DEBUG=* npm run test:e2e:test-only
 ```
 
 ## Future Enhancements
@@ -273,4 +317,4 @@ DEBUG=* npm run e2e:test-only
 - [ ] Test multiple addresses in single sync run
 - [ ] Add load test (many denylists in one transaction)
 - [ ] Test contract event filtering (listener only receives relevant events)
-- [ ] Failure scenarios (insufficient funds, invalid contract state, RPC outages)
+- [x] Failure scenarios (insufficient funds, invalid contract state, RPC outages)

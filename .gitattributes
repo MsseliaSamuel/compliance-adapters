@@ -11,3 +11,6 @@
 *.woff2 binary
 *.ttf binary
 *.eot binary
+
+# Lockfile noise reduction in PR diffs.
+package-lock.json linguist-generated=true diff=lockfile

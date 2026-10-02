@@ -160,6 +160,22 @@ app.post('/api/challenge', (req, res) => {
 | `windowMs` | `60000` (1 minute) | The time window in milliseconds during which requests are counted. |
 | `maxRequests` | `100` | The maximum number of requests allowed within the window. |
 | `keyGenerator` | `(req) => req.ip` | A function returning a unique key for each client (defaults to the request IP). |
+| `store` | `InMemoryRateLimitStore` | A pluggable backend implementing `RateLimitStore` for local or distributed counters (e.g. Redis). |
+
+### `createSep10Middleware` Options
+
+`createSep10Middleware(options)` accepts the following options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `serverAccountId` | `string` | *(required)* | Stellar public key (G...) of the SEP-10 auth server. |
+| `homeDomains` | `string \| string[]` | *(required)* | Expected home domain(s) embedded in the challenge. |
+| `webAuthDomain` | `string \| string[]` | *(required)* | Expected web-auth domain(s) embedded in the challenge. |
+| `networkPassphrase` | `string` | `Networks.TESTNET` | Stellar network passphrase. |
+| `expectedMemo` | `string` | `undefined` | Optional memo that must match the challenge memo. |
+| `maxTokenLength` | `number` | `8192` | Maximum accepted length (in characters) of the bearer token, rejected with `401` (`"bearer token too large"`) before XDR parsing is attempted. Guards against unauthenticated callers forcing expensive XDR-parsing work with oversized input. |
+| `revocationStore` | `RevocationStore` | `undefined` | Optional store consulted after challenge verification to reject revoked addresses before `timeoutSeconds` expires. |
+| `logger` | `Logger` | `noopLogger` | Injectable logger (`debug`, `info`, `warn`, `error`) for auth and revocation observability. |
 
 When the limit is exceeded the middleware responds with **429** and a JSON body:
 
@@ -170,9 +186,9 @@ When the limit is exceeded the middleware responds with **429** and a JSON body:
 The `Retry-After` header is also set to the number of seconds the client should
 wait before retrying.
 
-> **Note**: The in-memory store is process-local and not shared across
-> instances. For multi-process or multi-region deployments, replace this
-> middleware with a Redis-backed limiter such as `express-rate-limit`.
+> **Note**: The default in-memory store is process-local and not shared across
+> instances. For multi-process or multi-region deployments, supply a custom
+> `store` implementation backed by Redis or another shared datastore.
 
 Because there's no session token, a challenge can't be revoked before its
 `timeoutSeconds` elapses unless you supply a `revocationStore`. An in-memory

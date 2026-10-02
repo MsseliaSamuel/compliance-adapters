@@ -9,6 +9,22 @@ export interface RateLimiterOptions {
   windowMs?: number;
   maxRequests?: number;
   keyGenerator?: (req: import('express').Request) => string;
+  store?: RateLimitStore;
+}
+
+export interface RateLimitDecision {
+  allowed: boolean;
+  count: number;
+  resetAt: number;
+}
+
+export interface RateLimitStore {
+  consume(
+    key: string,
+    now: number,
+    windowMs: number,
+    maxRequests: number,
+  ): RateLimitDecision | Promise<RateLimitDecision>;
 }
 
 interface RateLimitEntry {
@@ -20,6 +36,68 @@ const DEFAULT_MAX_REQUESTS = 100;
 
 function defaultKeyGenerator(req: import('express').Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+export class InMemoryRateLimitStore implements RateLimitStore {
+  private readonly store = new Map<string, RateLimitEntry>();
+  private sweepTimer: ReturnType<typeof setInterval> | undefined;
+
+  consume(
+    key: string,
+    now: number,
+    windowMs: number,
+    maxRequests: number,
+  ): RateLimitDecision {
+    this.ensureSweepTimer(windowMs);
+
+    let entry = this.store.get(key);
+    if (!entry) {
+      entry = { timestamps: [] };
+      this.store.set(key, entry);
+    }
+
+    entry.timestamps = entry.timestamps.filter((t) => now - t < windowMs);
+
+    if (entry.timestamps.length >= maxRequests) {
+      return {
+        allowed: false,
+        count: entry.timestamps.length,
+        resetAt: entry.timestamps[0] + windowMs,
+      };
+    }
+
+    entry.timestamps.push(now);
+    return {
+      allowed: true,
+      count: entry.timestamps.length,
+      resetAt: entry.timestamps[0] + windowMs,
+    };
+  }
+
+  private ensureSweepTimer(windowMs: number): void {
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.store) {
+        entry.timestamps = entry.timestamps.filter((t) => now - t < windowMs);
+        if (entry.timestamps.length === 0) {
+          this.store.delete(key);
+        }
+      }
+    }, windowMs);
+
+    if (this.sweepTimer.unref) {
+      this.sweepTimer.unref();
+    }
+  }
+}
+
+function validatePositiveInteger(value: number, optionName: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `rateLimiter: "${optionName}" must be a positive integer. Received ${value}.`,
+    );
+  }
 }
 
 /**
@@ -51,61 +129,28 @@ export function rateLimiter(options: RateLimiterOptions = {}): RequestHandler {
   const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
   const maxRequests = options.maxRequests ?? DEFAULT_MAX_REQUESTS;
   const keyFn = options.keyGenerator ?? defaultKeyGenerator;
-
-  // Using a plain object instead of Map so that the store can be inspected
-  // from tests (no private symbol issues).
-  const store = new Map<string, RateLimitEntry>();
-
-  // Periodic sweep — every windowMs we discard stale entries so the store
-  // doesn't grow unbounded under heavy traffic. Started lazily on the first
-  // request so a middleware instance that never receives traffic never
-  // schedules a timer.
-  let sweepTimer: ReturnType<typeof setInterval> | undefined;
-
-  function ensureSweepTimer(): void {
-    if (sweepTimer) return;
-    sweepTimer = setInterval(() => {
-      const now = Date.now();
-      for (const [key, entry] of store) {
-        entry.timestamps = entry.timestamps.filter((t) => now - t < windowMs);
-        if (entry.timestamps.length === 0) {
-          store.delete(key);
-        }
-      }
-    }, windowMs);
-
-    // Allow the timer to keep the process alive (like a keepAlive timer).
-    if (sweepTimer.unref) {
-      sweepTimer.unref();
-    }
-  }
+  validatePositiveInteger(windowMs, 'windowMs');
+  validatePositiveInteger(maxRequests, 'maxRequests');
+  const store = options.store ?? new InMemoryRateLimitStore();
 
   return (req, res, next) => {
-    ensureSweepTimer();
     const key = keyFn(req);
     const now = Date.now();
-
-    let entry = store.get(key);
-    if (!entry) {
-      entry = { timestamps: [] };
-      store.set(key, entry);
-    }
-
-    // Remove timestamps that have fallen out of the window.
-    entry.timestamps = entry.timestamps.filter((t) => now - t < windowMs);
-
-    if (entry.timestamps.length >= maxRequests) {
-      const oldest = entry.timestamps[0];
-      const retryAfter = Math.ceil((oldest + windowMs - now) / 1000);
-
-      res
-        .status(429)
-        .set('Retry-After', String(retryAfter))
-        .json({ error: 'rate_limit_exceeded', retryAfter });
-      return;
-    }
-
-    entry.timestamps.push(now);
-    next();
+    Promise.resolve(store.consume(key, now, windowMs, maxRequests))
+      .then((decision) => {
+        if (!decision.allowed) {
+          const retryAfter = Math.max(
+            1,
+            Math.ceil((decision.resetAt - now) / 1000),
+          );
+          res
+            .status(429)
+            .set('Retry-After', String(retryAfter))
+            .json({ error: 'rate_limit_exceeded', retryAfter });
+          return;
+        }
+        next();
+      })
+      .catch(next);
   };
 }

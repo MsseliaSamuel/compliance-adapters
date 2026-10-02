@@ -7,7 +7,15 @@ import { generateChallenge } from '../src/challenge';
 
 const DURATION_MS = 2000;
 
-function runBenchmark(): void {
+interface BenchmarkResult {
+  benchmark: 'sep10-auth-generate-challenge-throughput';
+  durationMs: number;
+  iterations: number;
+  opsPerSecond: number;
+  timestamp: string;
+}
+
+function runBenchmark(): BenchmarkResult {
   const serverKeypair = Keypair.random();
   const clientKeypair = Keypair.random();
   const clientAddress = clientKeypair.publicKey();
@@ -25,11 +33,27 @@ function runBenchmark(): void {
     elapsed = Date.now() - start;
   }
 
-  const opsPerSecond = iterations / (elapsed / 1000);
-
-  console.log(
-    `generateChallenge: ${iterations} calls in ${elapsed}ms (${opsPerSecond.toFixed(1)} ops/sec)`,
-  );
+  const opsPerSecond = Number((iterations / (elapsed / 1000)).toFixed(1));
+  return {
+    benchmark: 'sep10-auth-generate-challenge-throughput',
+    durationMs: elapsed,
+    iterations,
+    opsPerSecond,
+    timestamp: new Date().toISOString(),
+  };
 }
 
-runBenchmark();
+function printResult(result: BenchmarkResult): void {
+  console.log(
+    `generateChallenge: ${result.iterations} calls in ${result.durationMs}ms (${result.opsPerSecond.toFixed(1)} ops/sec)`,
+  );
+  // Machine-readable marker consumed by CI regression checks.
+  console.log(`BENCHMARK_RESULT_JSON=${JSON.stringify(result)}`);
+}
+
+const result = runBenchmark();
+if (process.argv.includes('--json')) {
+  console.log(JSON.stringify(result));
+} else {
+  printResult(result);
+}

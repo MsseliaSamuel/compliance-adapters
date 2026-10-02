@@ -16,6 +16,7 @@
  */
 
 import * as path from 'path';
+import { Keypair } from '@stellar/stellar-sdk';
 import {
   syncSanctionsToDenylist,
   createRpcDenylistWriter,
@@ -134,5 +135,26 @@ describe('End-to-End Integration: Contract → Sync → Listener', () => {
     console.log('✓ Listener successfully observed and re-emitted event');
 
     console.log('\n=== E2E Test Completed Successfully ===\n');
+  });
+});
+
+describe('End-to-End Failure Scenarios', () => {
+  it('deployContract rejects with a clear error when the WASM file is missing', async () => {
+    const server = await waitForRpcHealth();
+    const missingPath = path.join(__dirname, '..', 'fixtures', 'does-not-exist.wasm');
+
+    await expect(deployContract(server, TEST_CONFIG.issuer, missingPath)).rejects.toThrow(
+      /Could not read contract WASM/,
+    );
+  });
+
+  it('deployContract fails fast when the deployer account was never funded', async () => {
+    const server = await waitForRpcHealth();
+    const unfunded = Keypair.random();
+
+    const started = Date.now();
+    await expect(deployContract(server, unfunded, WASM_PATH)).rejects.toThrow();
+    // Must surface the error promptly rather than hanging until the 30s finalization timeout.
+    expect(Date.now() - started).toBeLessThan(25000);
   });
 });

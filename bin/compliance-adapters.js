@@ -159,7 +159,8 @@ Options:
  *   --contract-id <id>          Deployed contract ID to filter events for (required, repeatable)
  *   --rpc-url <url>             Soroban RPC endpoint (default: testnet)
  *   --network-passphrase <str>  Stellar network passphrase (default: testnet)
- *   --webhook-url <url>         Webhook to POST events to (required)
+ *   --webhook-url <url>         Webhook to POST events to (required unless --dry-run)
+ *   --dry-run                   Print events to stdout instead of sending to a webhook
  *   --start-ledger <n>          Starting ledger for the first poll (default: none)
  *   --poll-interval-ms <n>      Polling interval in milliseconds (default: 5000)
  *   --max-retries <n>           Max consecutive poll failures before exiting (default: 10)
@@ -176,7 +177,8 @@ Options:
   --contract-id <id>          Contract ID to watch (required; repeat for multiple contracts)
   --rpc-url <url>             Soroban RPC endpoint (default: https://soroban-testnet.stellar.org)
   --network-passphrase <str>  Stellar network passphrase (default: testnet)
-  --webhook-url <url>         Webhook endpoint to POST events to (required)
+  --webhook-url <url>         Webhook endpoint to POST events to (required unless --dry-run)
+  --dry-run                   Print events to stdout instead of sending them to a webhook
   --start-ledger <n>          Starting ledger for the very first poll (omit to use cursor-only)
   --poll-interval-ms <n>      Milliseconds between polls (default: 5000)
   --max-retries <n>           Max consecutive failures before the process exits (default: 10)
@@ -187,8 +189,13 @@ Examples:
   compliance-adapters listen \\
     --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABH4M \\
     --rpc-url https://soroban-testnet.stellar.org \\
-    --webhook-url http://localhost:9000/events \\
+    --dry-run \\
     --start-ledger 100000
+
+  # Forward events to a webhook
+  compliance-adapters listen \\
+    --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABH4M \\
+    --webhook-url http://localhost:9000/events
 
   # Multiple contracts
   compliance-adapters listen \\
@@ -209,7 +216,8 @@ Examples:
 
   const rpcUrl = args['rpc-url'] ?? 'https://soroban-testnet.stellar.org';
   const networkPassphrase = args['network-passphrase'] ?? Networks.TESTNET;
-  const webhookUrl = args['webhook-url'] ?? null;
+  const dryRun = args['dry-run'] === true;
+  const webhookUrl = typeof args['webhook-url'] === 'string' ? args['webhook-url'] : null;
   const startLedger = args['start-ledger'] ? parseInt(args['start-ledger'], 10) : undefined;
   const pollIntervalMs = args['poll-interval-ms'] ? parseInt(args['poll-interval-ms'], 10) : 5000;
   const maxRetries = args['max-retries'] ? parseInt(args['max-retries'], 10) : 10;
@@ -220,7 +228,7 @@ Examples:
     return;
   }
 
-  if (!webhookUrl) {
+  if (!webhookUrl && !dryRun) {
     console.error('Missing required flag: --webhook-url <url>');
     process.exitCode = 1;
     return;
@@ -233,13 +241,13 @@ Examples:
     startLedger,
   });
 
-  const webhookSender = new HttpWebhookSender({ url: webhookUrl });
+  const webhookSender = dryRun ? null : new HttpWebhookSender({ url: webhookUrl });
 
   const listener = new HorizonListener({
     eventSource,
     async onEvent(event) {
       console.info('[listen] event received:', JSON.stringify(event));
-      await webhookSender.send(event);
+      if (webhookSender) await webhookSender.send(event);
     },
     pollIntervalMs,
     maxRetries,
@@ -251,17 +259,6 @@ Examples:
     },
   });
 
-  console.info('[listen] Starting Horizon event listener...');
-  console.info(`[listen]   contracts:      ${contractIds.join(', ')}`);
-  console.info(`[listen]   rpc-url:        ${rpcUrl}`);
-  console.info(`[listen]   webhook-url:    ${webhookUrl}`);
-  console.info(`[listen]   poll-interval:  ${pollIntervalMs}ms`);
-  console.info(`[listen]   max-retries:    ${maxRetries}`);
-  if (startLedger !== undefined) {
-    console.info(`[listen]   start-ledger:   ${startLedger}`);
-  }
-  console.info('[listen] Press Ctrl+C to stop.\n');
-
   // Graceful shutdown on SIGINT / SIGTERM
   process.on('SIGINT', () => {
     console.info('\n[listen] Received SIGINT — stopping listener...');
@@ -271,6 +268,17 @@ Examples:
     console.info('[listen] Received SIGTERM — stopping listener...');
     listener.stop();
   });
+
+  console.info('[listen] Starting Horizon event listener...');
+  console.info(`[listen]   contracts:      ${contractIds.join(', ')}`);
+  console.info(`[listen]   rpc-url:        ${rpcUrl}`);
+  console.info(`[listen]   webhook-url:    ${dryRun ? '(dry-run: events printed only)' : webhookUrl}`);
+  console.info(`[listen]   poll-interval:  ${pollIntervalMs}ms`);
+  console.info(`[listen]   max-retries:    ${maxRetries}`);
+  if (startLedger !== undefined) {
+    console.info(`[listen]   start-ledger:   ${startLedger}`);
+  }
+  console.info('[listen] Press Ctrl+C to stop.\n');
 
   await listener.start();
   console.info('[listen] Listener stopped.');

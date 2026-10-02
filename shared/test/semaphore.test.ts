@@ -37,7 +37,9 @@ describe('createSemaphore', () => {
       return maxObserved;
     };
 
-    const maxConcurrent = await Promise.all([task(), task(), task(), task()]);
+    const maxConcurrentPromise = Promise.all([task(), task(), task(), task()]);
+    await jest.advanceTimersByTimeAsync(250);
+    const maxConcurrent = await maxConcurrentPromise;
 
     // All tasks should observe <= 2 concurrent
     expect(Math.max(...maxConcurrent)).toBeLessThanOrEqual(2);
@@ -93,6 +95,34 @@ describe('createSemaphore', () => {
     expect(timesAcquired).toBe(2);
 
     release2();
+  });
+
+  it('does not allow double release to exceed configured concurrency', async () => {
+    const semaphore = createSemaphore(1);
+    const release1 = await semaphore.acquire();
+
+    release1();
+    release1();
+
+    const order: string[] = [];
+    const task = async (name: string) => {
+      const release = await semaphore.acquire();
+      try {
+        order.push(`${name}-start`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        order.push(`${name}-end`);
+      } finally {
+        release();
+      }
+    };
+
+    const p1 = task('A');
+    const p2 = task('B');
+
+    await jest.advanceTimersByTimeAsync(30);
+    await Promise.all([p1, p2]);
+
+    expect(order).toEqual(['A-start', 'A-end', 'B-start', 'B-end']);
   });
 
   it('throws or rejects if limit is 0 or negative', () => {

@@ -35,33 +35,15 @@
  */
 
 import { randomBytes } from 'crypto';
+import type {
+  SpanStatus,
+  SpanAttributes,
+  SpanData,
+  TracingContext,
+} from '@compliance-adapters/tracing-types';
+export type { SpanStatus, SpanAttributes, SpanData, TracingContext };
 
 // ── Span data model ───────────────────────────────────────────────────────────
-
-export type SpanStatus = 'ok' | 'error' | 'cancelled';
-
-export interface SpanAttributes {
-  [key: string]: string | number | boolean | undefined;
-}
-
-/** Immutable snapshot of a completed span, ready for export. */
-export interface SpanData {
-  /** 32-hex-character W3C-compatible trace identifier. */
-  traceId: string;
-  /** 16-hex-character W3C-compatible span identifier. */
-  spanId: string;
-  /** spanId of the parent span, or undefined for the root. */
-  parentSpanId: string | undefined;
-  name: string;
-  startTimeMs: number;
-  endTimeMs: number;
-  durationMs: number;
-  status: SpanStatus;
-  /** Low-cardinality attributes only — no transaction payloads or user paths. */
-  attributes: SpanAttributes;
-  /** Error message if status === 'error'. */
-  errorMessage?: string;
-}
 
 // ── Live span handle ──────────────────────────────────────────────────────────
 
@@ -75,11 +57,6 @@ export interface Span {
 }
 
 // ── Tracer interface ──────────────────────────────────────────────────────────
-
-export interface TracingContext {
-  traceId: string;
-  spanId: string;
-}
 
 export interface Tracer {
   /** Start a new span. If `parentContext` is provided, the new span is a child. */

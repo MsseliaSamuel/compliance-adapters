@@ -5,7 +5,7 @@
 
 export { SanctionsProvider } from './SanctionsProvider';
 export { MockSanctionsProvider, MOCK_FLAGGED_ADDRESSES } from './mockProvider';
-export { CsvSanctionsProvider, parseCsv } from './csvProvider';
+export { CsvSanctionsProvider } from './csvProvider';
 export {
   syncSanctionsToDenylist,
   createRpcDenylistWriter,
@@ -60,4 +60,6 @@ export {
   type TracingOptions,
 } from './tracing';
 export { RateLimitedSanctionsProvider, RateLimitOptions } from './rateLimitedProvider';
+export { RestSanctionsProvider } from './restProvider';
+export type { RestSanctionsProviderOptions } from './restProvider';
 export type { Logger } from '@compliance-adapters/logger';

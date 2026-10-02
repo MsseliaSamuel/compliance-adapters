@@ -3,13 +3,52 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { Keypair, Networks, StrKey, WebAuth } from '@stellar/stellar-sdk';
+import { Keypair, Networks, WebAuth } from '@stellar/stellar-sdk';
 import { type Logger, noopLogger } from '@compliance-adapters/logger';
+import { isValidStellarAddress } from '@compliance-adapters/shared';
 
 export class InvalidClientAddressError extends Error {
   constructor(address: string) {
     super(`Invalid client address: ${address}`);
     this.name = 'InvalidClientAddressError';
+  }
+}
+
+export class InvalidMemoError extends Error {
+  constructor(memo: string) {
+    super(`Invalid memo: "${memo}" must be a numeric string representing a 64-bit unsigned integer`);
+    this.name = 'InvalidMemoError';
+  }
+}
+
+export class InvalidDomainError extends Error {
+  constructor(name: string, value: string) {
+    super(
+      `sep10-auth: ${name} must be a bare domain (no scheme, path, or whitespace), got "${value}"`,
+    );
+    this.name = 'InvalidDomainError';
+  }
+}
+
+export class ServerKeypairCannotSignError extends Error {
+  constructor() {
+    super(
+      'sep10-auth: serverKeypair cannot sign — provide a keypair with a secret key, not a public-key-only keypair',
+    );
+    this.name = 'ServerKeypairCannotSignError';
+  }
+}
+
+const MAX_UINT64 = 2n ** 64n - 1n;
+
+/**
+ * Throws {@link InvalidDomainError} when `value` is not a bare domain, i.e. it
+ * contains a URL scheme (`://`), a `/`, or whitespace, as SEP-10 requires for
+ * `home_domain` and `web_auth_domain`.
+ */
+export function assertBareDomain(name: string, value: string): void {
+  if (/:\/\/|\/|\s/.test(value)) {
+    throw new InvalidDomainError(name, value);
   }
 }
 
@@ -59,7 +98,11 @@ export function generateChallenge(
   serverKeypair: Keypair,
   options: GenerateChallengeOptions = {},
 ): GeneratedChallenge {
-  if (!StrKey.isValidEd25519PublicKey(clientAddress)) {
+  if (!serverKeypair.canSign()) {
+    throw new ServerKeypairCannotSignError();
+  }
+
+  if (!isValidStellarAddress(clientAddress)) {
     throw new InvalidClientAddressError(clientAddress);
   }
 
@@ -71,8 +114,16 @@ export function generateChallenge(
     logger.warn(
       `sep10-auth: generateChallenge is using the default homeDomain "${DEFAULT_HOME_DOMAIN}" ` +
         'in a production environment. Pass an explicit `homeDomain` option matching your deployed domain.',
+      { homeDomain: DEFAULT_HOME_DOMAIN },
     );
   }
+  assertBareDomain('homeDomain', homeDomain);
+  assertBareDomain('webAuthDomain', webAuthDomain);
+
+  if (options.memo != null && (!/^\d+$/.test(options.memo) || BigInt(options.memo) > MAX_UINT64)) {
+    throw new InvalidMemoError(options.memo);
+  }
+
   const networkPassphrase = options.networkPassphrase ?? Networks.TESTNET;
   const timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
 
